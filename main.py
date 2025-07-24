@@ -49,9 +49,8 @@ def main():
         - **Resize Dimension:** Smaller frame size means faster processing but can reduce detection accuracy.
         - *Motion detection is applied to skip frames with no activity.*
         """)
-    
-    # --- Modified File Uploader with Session State ---
-    
+
+    # --- Session State File Uploader Handling ---
     uploaded_video_new = st.file_uploader(
         "Upload a traffic video",
         type=["mp4", "avi", "mov", "mkv"],
@@ -66,7 +65,7 @@ def main():
     
     # Initialize variables for video info
     total_video_frames = 0
-    video_fps = 30.0 # Default if not read
+    video_fps = 30.0  # Default if not read
 
     if uploaded_video:
         file_size = len(uploaded_video.getvalue()) / (1024 * 1024)
@@ -82,7 +81,6 @@ def main():
             cap_info = cv2.VideoCapture(temp_video_path)
             total_video_frames = int(cap_info.get(cv2.CAP_PROP_FRAME_COUNT))
             video_fps = cap_info.get(cv2.CAP_PROP_FPS)
-            # Ensure video_fps is a positive number, default to 30 if not available
             video_fps = video_fps if video_fps > 0 else 30.0 
             cap_info.release()
 
@@ -91,7 +89,6 @@ def main():
                 st.warning(f"⚠️ **Warning:** Frame Skip ({frame_skip}) is very high compared to video FPS ({video_fps:.1f}). "
                            "This may lead to significant loss of information or 'No vehicles detected'. Consider lowering it.")
             
-            # Calculate estimated processed frames considering both max_frames and actual video length
             estimated_processed_frames = min(max_frames, total_video_frames) // frame_skip
             if estimated_processed_frames < 50:
                  st.warning(f"⚠️ **Warning:** With current settings, only ~{estimated_processed_frames} frames will be processed. "
@@ -106,7 +103,6 @@ def main():
         
         if st.button("🚀 Start Analysis", type="primary"):
             start_time = time.time()
-            
             try:
                 analyzer = VehicleAnalyzer()
                 analyzer.model = analyzer.load_model()
@@ -114,8 +110,7 @@ def main():
                 st.error(f"Failed to initialize analyzer: {e}")
                 st.stop()
             
-            # Use the already saved temp_video_path
-            video_path_for_analysis = temp_video_path 
+            video_path_for_analysis = temp_video_path
             
             try:
                 with st.spinner("🔍 Analyzing video... This will take just a few seconds!"):
@@ -126,7 +121,7 @@ def main():
                         batch_size,
                         confidence_thresh=confidence_thresh, 
                         resize_dim=resize_dim,
-                        fps_hint=video_fps # Pass the actual video FPS
+                        fps_hint=video_fps
                     )
                 
                 analysis_time = time.time() - start_time
@@ -135,11 +130,9 @@ def main():
                     st.warning("⚠️ No vehicles detected. Try adjusting settings or use a different video.")
                 else:
                     st.success(f"✅ Analysis complete in {analysis_time:.1f} seconds!")
-                    
                     dashboard = DashboardGenerator()
                     
                     st.header("📈 Key Metrics")
-                    # Pass the estimated number of frames that would have been processed for KPI calculations
                     dashboard.create_kpi_metrics(df_results, estimated_processed_frames, frame_skip)
                     
                     st.header("📊 Vehicle Distribution")
