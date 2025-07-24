@@ -13,17 +13,17 @@ logger = logging.getLogger(__name__)
 
 def main():
     st.set_page_config(
-        page_title="Vehicle Traffic Analysis Dashboard",
+        page_title="🚗Vehicle Traffic Analysis Dashboard",
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    
-    st.title("Vehicle Traffic Analysis Dashboard")
+
+    st.title("🚗Vehicle Traffic Analysis Dashboard")
     st.markdown("Upload a video to analyze vehicle types, distribution, and traffic density over time.")
     
     # Sidebar inputs with concise descriptions
     with st.sidebar:
-        st.header("⚙️ Analysis Settings")
+        st.header("🚗 Vehicle Traffic Analysis Dashboard")
         
         frame_skip = st.slider(
             "Process every N-th frame",
