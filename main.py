@@ -21,22 +21,34 @@ def main():
     st.title("Vehicle Traffic Analysis Dashboard")
     st.markdown("Upload a video to analyze vehicle types, distribution, and traffic density over time.")
     
-    # Sidebar inputs
+    # Sidebar inputs with concise descriptions
     with st.sidebar:
+        st.header("⚙️ Analysis Settings")
+        
         frame_skip = st.slider(
-            "N-th frame (higher = faster, lower = more detailed)",
-            1, 15, 5,
-            help="Skip frames to speed up analysis"
+            "Process every N-th frame",
+            min_value=1,
+            max_value=15,
+            value=5,
+            help="Higher values skip more frames and speed up analysis but may miss detections. Lower values analyze more frames for detailed results."
         )
+        st.caption("Frame skipping trades off between speed and detail.")
+        
         max_frames = st.number_input(
             "Maximum frames to analyze",
-            min_value=10, max_value=2000, value=500, step=10,
-            help="Limit the number of frames to speed up or slow down analysis"
+            min_value=10,
+            max_value=2000,
+            value=500,
+            step=10,
+            help="Sets the upper limit on processed video frames to control runtime and speed."
         )
+        st.caption("Limit frames to reduce processing time on longer videos.")
     
     # File uploader with session state persistence
     uploaded_video_new = st.file_uploader(
-        "Upload a traffic video", type=["mp4", "avi", "mov"], key="video_uploader"
+        "Upload a traffic video", 
+        type=["mp4", "avi", "mov"], 
+        key="video_uploader"
     )
     if uploaded_video_new is not None:
         st.session_state['uploaded_video'] = uploaded_video_new
