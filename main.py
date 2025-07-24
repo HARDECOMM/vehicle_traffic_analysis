@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.title("🚗 Traffic Analysis Dashboard"")
+st.title("🚗Traffic Analysis Dashboard")
 st.markdown("Upload a video to analyze vehicle types, distribution, and traffic density over time.")
 
 # --- File Uploader ---
