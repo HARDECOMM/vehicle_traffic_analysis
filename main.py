@@ -1,204 +1,185 @@
-# traffic_analysis_dashboard/main.py
-
-import streamlit as st
+from ultralytics import YOLO
 import cv2
+import numpy as np
 import pandas as pd
 import tempfile
+import plotly.express as px
 import gc
 import time
-import os
-import logging
+import os # Import os for cleanup
 
-from vehicle_analyzer import VehicleAnalyzer
-from dashboard_generator import DashboardGenerator
+# --- Page Configuration (Optional but Recommended for Dashboards) ---
+st.set_page_config(
+    page_title="🚗Traffic Analysis Dashboard",
+    layout="wide", # Use wide layout to give more space for charts
+    initial_sidebar_state="expanded"
+)
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+st.title("🚗 Traffic Analysis Dashboard"")
+st.markdown("Upload a video to analyze vehicle types, distribution, and traffic density over time.")
 
-def main():
-    st.set_page_config(
-        page_title="🚗 Traffic Analysis Dashboard",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    
-    st.title("🚗 Vehicle Traffic Analysis Dashboard")
-    st.markdown("Upload a video to analyze vehicle types, distribution, and traffic patterns in seconds!")
-    
-    with st.sidebar:
-        st.header("⚙️ Analysis Settings")
-        # Set conservative defaults for initial testing
-        frame_skip = st.slider("Frame Skip (Higher = Faster)", 1, 15, 1) # DEBUG: Default to 1 to process all frames
-        max_frames = st.slider("Max Frames to Analyze", 50, 5000, 1000) # DEBUG: Increase max frames for testing
-        batch_size = st.selectbox("Batch Size", [4, 8, 16, 32], index=1) 
-        confidence_thresh = st.slider("Detection Confidence Threshold", 0.05, 1.0, 0.1, 0.05) # DEBUG: Lower default confidence
-        resize_dim = st.selectbox("Frame Resize Dimension (px)", [320, 416, 640], index=2, 
-                                  help="Smaller = faster processing, less accuracy.")
-        
-        st.header("📊 Performance Tips")
-        st.info("""
-        - Higher frame skip speeds up but risks missing vehicles.
-        - Lower max frames makes results quicker.
-        - Larger batch size better uses GPU but needs more memory.
-        - Lower confidence threshold finds more objects, higher reduces false positives.
-        - Smaller resize speeds up detection but may reduce accuracy.
-        """)
+# --- File Uploader ---
+uploaded_video = st.file_uploader("Upload a traffic video", type=["mp4", "avi", "mov"])
 
-    uploaded_video_new = st.file_uploader(
-        "Upload a traffic video",
-        type=["mp4", "avi", "mov", "mkv"],
-        help="Supported formats: MP4, AVI, MOV, MKV",
-        key="video_uploader"
-    )
-    if uploaded_video_new is not None:
-        st.session_state['uploaded_video'] = uploaded_video_new
+if uploaded_video:
+    if st.button("Start Analysis"):
+        with st.spinner("Processing video and generating insights... This may take a moment."):
+            # --- 1. Save uploaded file to temporary storage ---
+            # Using tempfile.NamedTemporaryFile for safer handling
+            temp_video_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+            temp_video_file.write(uploaded_video.read())
+            video_path = temp_video_file.name
+            temp_video_file.close() # Close the file immediately after writing
 
-    uploaded_video = st.session_state.get('uploaded_video', None)
-
-    total_video_frames = 0
-    video_fps = 30.0  
-
-    temp_video_path = None # Define temp_video_path here
-
-    if uploaded_video:
-        file_size = len(uploaded_video.getvalue()) / (1024 * 1024)
-        st.info(f"📁 File: {uploaded_video.name} ({file_size:.1f} MB)")
-        
-        try:
-            # Save uploaded file to a temporary location for OpenCV to read
-            # IMPORTANT: Ensure this temporary file is correctly written and exists
-            temp_file_bytes = uploaded_video.getvalue()
-            if not temp_file_bytes:
-                st.error("Uploaded video file is empty. Please upload a valid video.")
-                uploaded_video = None # Invalidate uploaded_video for this run
-                return
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_file:
-                temp_file.write(temp_file_bytes)
-                temp_video_path = temp_file.name # Path is now guaranteed to be set if successful
-            
-            logger.info(f"Video saved to temporary path: {temp_video_path}")
-            st.info(f"Debug: Temporary video saved at {temp_video_path}")
-
-            cap_info = cv2.VideoCapture(temp_video_path)
-            if not cap_info.isOpened():
-                st.error(f"Failed to open video file at {temp_video_path}. It might be corrupted or an unsupported codec.")
-                logger.error(f"cv2.VideoCapture failed to open {temp_video_path}")
-                # Clean up if cap_info failed to open
-                if temp_video_path and os.path.exists(temp_video_path):
-                    os.unlink(temp_video_path)
-                uploaded_video = None
-                return
-
-            total_video_frames = int(cap_info.get(cv2.CAP_PROP_FRAME_COUNT))
-            video_fps = cap_info.get(cv2.CAP_PROP_FPS)
-            if video_fps <= 0:
-                video_fps = 30.0  # fallback for videos with no FPS info
-            cap_info.release()
-
-            st.info(f"Debug: Video metadata - Total frames: {total_video_frames}, FPS: {video_fps:.1f}")
-
-            if frame_skip >= video_fps:
-                st.warning(f"⚠️ Frame Skip ({frame_skip}) >= video FPS ({video_fps:.1f}). Consider reducing frame skip to avoid missing detections.")
-
-            est_processed_frames = min(max_frames, total_video_frames) // frame_skip
-            if est_processed_frames < 50:
-                st.warning(f"⚠️ Estimated frames to process ({est_processed_frames}) is low, consider increasing max frames or reducing frame skip.")
-
-        except Exception as e:
-            st.error(f"Error processing video file or reading info: {e}. Please try a different video.")
-            logger.error(f"Error in video info/temp file handling: {e}", exc_info=True)
-            if temp_video_path and os.path.exists(temp_video_path):
-                os.unlink(temp_video_path)
-            uploaded_video = None # Invalidate to stop further processing in this run
-            return
-        
-        if st.button("🚀 Start Analysis", type="primary"):
-            start_time = time.time()
-            
-            # --- Inside the button click, ensure temp_video_path is still valid ---
-            if uploaded_video is None or not os.path.exists(temp_video_path):
-                st.error("Video file is not available for analysis. Please re-upload.")
-                logger.error("Analysis triggered but temp_video_path is invalid.")
-                return
-
+            # --- 2. Load YOLO model ---
             try:
-                analyzer = VehicleAnalyzer()
-                analyzer.model = analyzer.load_model()
+                # Cache the model to avoid reloading on every rerun
+                @st.cache_resource
+                def load_yolo_model():
+                    return YOLO('yolov8n.pt') # yolov8n is lightweight and faster
+                model = load_yolo_model()
             except Exception as e:
-                st.error(f"Failed to initialize analyzer: {e}. Check logs for model download/load errors.")
-                logger.error(f"Model initialization failed: {e}", exc_info=True)
+                st.error(f"Error loading YOLO model: {e}")
+                st.stop() # Stop execution if model fails to load
+
+            # --- 3. Process video frames and collect data ---
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                st.error(f"Error: Could not open video at {video_path}. Please check file integrity.")
+                # Clean up temp file
+                os.unlink(video_path)
                 st.stop()
-            
-            video_path_for_analysis = temp_video_path # Guaranteed to be valid if we reach here
-            
-            try:
-                with st.spinner("🔍 Analyzing video... This will take just a few seconds!"):
-                    df_results = analyzer.analyze_video_optimized(
-                        video_path_for_analysis, 
-                        frame_skip, 
-                        max_frames, 
-                        batch_size,
-                        confidence_thresh=confidence_thresh, 
-                        resize_dim=resize_dim,
-                        fps_hint=video_fps
-                    )
-                
-                analysis_time = time.time() - start_time
-                st.info(f"Debug: Analysis returned {len(df_results)} detections.") # Debug output
 
-                if df_results.empty:
-                    st.warning("⚠️ No vehicles detected. Try adjusting settings or use a different video.")
-                else:
-                    st.success(f"✅ Analysis complete in {analysis_time:.1f} seconds!")
-                    dashboard = DashboardGenerator()
-                    
-                    st.header("📈 Key Metrics")
-                    dashboard.create_kpi_metrics(df_results, est_processed_frames, frame_skip)
-                    
-                    st.header("📊 Vehicle Distribution")
-                    dashboard.create_vehicle_distribution_chart(df_results)
-                    
-                    st.header("📈 Traffic Timeline")
-                    dashboard.create_traffic_timeline(df_results)
-                    
-                    st.header("🎯 Detection Quality")
-                    dashboard.create_confidence_analysis(df_results)
-                    
-                    st.header("💾 Export Data")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        csv_data = df_results.to_csv(index=False)
-                        st.download_button(
-                            "📥 Download Full Data (CSV)",
-                            csv_data,
-                            f"traffic_analysis_{int(time.time())}.csv",
-                            "text/csv"
-                        )
-                    with col2:
-                        summary_data = df_results.groupby('vehicle_type').agg(
-                            count=('confidence', 'count'), 
-                            mean_confidence=('confidence', 'mean'), 
-                            min_frame_id=('frame_id', 'min'), 
-                            max_frame_id=('frame_id', 'max') 
-                        ).round(3)
-                        st.download_button(
-                            "📊 Download Summary (CSV)",
-                            summary_data.to_csv(),
-                            f"traffic_summary_{int(time.time())}.csv",
-                            "text/csv"
-                        )
-            
-            except Exception as e:
-                st.error(f"Analysis failed: {e}")
-                logger.error(f"Analysis error: {e}", exc_info=True) # Print full traceback
-            
-            finally:
-                # Ensure temp file is cleaned up after all operations
-                if temp_video_path and os.path.exists(temp_video_path):
-                    os.unlink(temp_video_path)
-                    logger.info(f"Cleaned up temporary video file: {temp_video_path}")
+            frame_skip = st.slider("Process every N-th frame (higher = faster, lower = more detailed)", 1, 10, 5) # Slider for user control
+            max_frames_to_process = st.number_input("Maximum frames to analyze (for quick demo)", 10, 500, 100) # User can set max frames
+
+
+            # Data structures to store results
+            all_detections_data = [] # Stores {'frame', 'class', 'confidence'} for each detection
+            class_names = model.names # Get names from YOLO model for plotting
+
+            current_frame_id = 0
+            processed_count = 0
+
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret: # End of video
+                    break
+
+                if current_frame_id % frame_skip == 0:
+                    status_text.text(f"Analyzing frame {current_frame_id}...")
+                    # Resize frame for faster inference (can be adjusted)
+                    # Common sizes: 320x320, 480x480, 640x640
+                    frame_for_inference = cv2.resize(frame, (320, 320))
+
+                    # Perform inference
+                    results = model(frame_for_inference, verbose=False)
+                    detections = results[0] # Get detections for the current frame
+
+                    # Process detected bounding boxes
+                    if detections.boxes is not None:
+                        for box in detections.boxes:
+                            cls_id = int(box.cls.cpu().numpy())
+                            confidence = float(box.conf.cpu().numpy())
+                            # Store detection data
+                            all_detections_data.append({
+                                'frame_id': current_frame_id,
+                                'vehicle_type': class_names[cls_id],
+                                'confidence': confidence
+                            })
+                    processed_count += 1
+                    progress_bar.progress(min(processed_count / max_frames_to_process, 1.0))
+
+                    if processed_count >= max_frames_to_process:
+                        status_text.text(f"Reached maximum frames ({max_frames_to_process}). Stopping analysis.")
+                        break # Stop if max frames reached
+
+                current_frame_id += 1
+                # Clean up memory
+                del frame
                 gc.collect()
 
-if __name__ == "__main__":
-    main()
+            cap.release()
+            os.unlink(video_path) # Clean up temporary video file
+
+            # --- 4. Generate Dashboard Visualizations ---
+            st.success("Analysis Complete! Generating Dashboard.")
+
+            if not all_detections_data:
+                st.warning("No vehicles were detected in the processed video. Try a different video or adjust settings.")
+                st.stop()
+
+            df_detections = pd.DataFrame(all_detections_data)
+
+            # --- KPI: Total Vehicles Detected (unique detections) ---
+            st.header("Key Performance Indicators")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Detections", len(df_detections))
+            with col2:
+                # Assuming 'vehicle_type' represents distinct categories
+                st.metric("Unique Vehicle Types", df_detections['vehicle_type'].nunique())
+            with col3:
+                # Simple average density per processed frame
+                avg_density = len(df_detections) / processed_count if processed_count > 0 else 0
+                st.metric(f"Avg. Vehicles per {frame_skip}-th Frame", f"{avg_density:.2f}")
+
+            # --- Chart 1: Vehicle Type Distribution (Bar Chart) ---
+            st.header("Vehicle Type Distribution")
+            vehicle_counts = df_detections['vehicle_type'].value_counts().reset_index()
+            vehicle_counts.columns = ['Vehicle Type', 'Count']
+            fig_type_bar = px.bar(
+                vehicle_counts,
+                x='Vehicle Type',
+                y='Count',
+                title='Count of Vehicles by Type',
+                text='Count',
+                template='plotly_white'
+            )
+            st.plotly_chart(fig_type_bar, use_container_width=True)
+
+            # --- Chart 2: Proportion of Vehicle Types (Pie Chart) ---
+            st.header("Proportion of Vehicle Types")
+            fig_type_pie = px.pie(
+                vehicle_counts,
+                names='Vehicle Type',
+                values='Count',
+                title='Proportion of Each Vehicle Type',
+                template='plotly_white'
+            )
+            st.plotly_chart(fig_type_pie, use_container_width=True)
+
+            # --- Chart 3: Traffic Density Over Time (Line Chart) ---
+            st.header("Traffic Density Over Time")
+            # Group by frame_id to get count of vehicles in each processed frame
+            traffic_over_time = df_detections.groupby('frame_id').size().reset_index(name='vehicles_detected')
+            fig_time = px.line(
+                traffic_over_time,
+                x='frame_id',
+                y='vehicles_detected',
+                title=f'Number of Vehicles Detected per {frame_skip}-th Frame',
+                labels={'frame_id': 'Frame Number', 'vehicles_detected': 'Vehicles Detected'},
+                markers=True,
+                template='plotly_white'
+            )
+            st.plotly_chart(fig_time, use_container_width=True)
+
+            # --- Download Raw Data ---
+            st.header("Download Data")
+            st.download_button(
+                label="Download All Detections Data (CSV)",
+                data=df_detections.to_csv(index=False).encode('utf-8'),
+                file_name='all_vehicle_detections.csv',
+                mime='text/csv'
+            )
+            st.download_button(
+                label="Download Vehicle Type Counts (CSV)",
+                data=vehicle_counts.to_csv(index=False).encode('utf-8'),
+                file_name='vehicle_type_counts.csv',
+                mime='text/csv'
+            )
+
+            st.info("Analysis complete! Scroll up to see the dashboard.")
