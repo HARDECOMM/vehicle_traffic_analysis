@@ -23,7 +23,7 @@ def main():
     
     # Sidebar inputs with concise descriptions
     with st.sidebar:
-        st.header("🚗 Vehicle Traffic Analysis Dashboard")
+        st.header("⚙️ Analysis Settings")
         
         frame_skip = st.slider(
             "Process every N-th frame",
