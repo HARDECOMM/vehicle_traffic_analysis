@@ -24,7 +24,7 @@ def main():
     # Sidebar inputs
     with st.sidebar:
         frame_skip = st.slider(
-            "Process every N-th frame (higher = faster, lower = more detailed)",
+            "N-th frame (higher = faster, lower = more detailed)",
             1, 15, 5,
             help="Skip frames to speed up analysis"
         )
